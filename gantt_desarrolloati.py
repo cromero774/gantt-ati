@@ -1,53 +1,61 @@
 import pandas as pd
 import plotly.express as px
-from dash import Dash, dcc, html, Input, Output
+from dash import Dash, dcc, html, Input, Output, callback_context, State
 import requests
 import sys
 from datetime import datetime
+import time
 
 # --- Función de debug ---
 def debug_print(message):
     pass  # Desactivado para entorno de producción
 
-# --- Carga de datos ---
-sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6s9qMzmA_sJRko5EDggumO4sybGVq3n-uOmZOMj8CJDnHo9AWZeZOXZGz7cTg4XoqeiPDIgQP3QER/pub?output=csv"
-
-try:
-    response = requests.get(sheet_url, timeout=15)
-    response.raise_for_status()
-    df = pd.read_csv(sheet_url, encoding='utf-8')
-    df.columns = df.columns.str.strip()
-    df['RN'] = df['RN'].astype(str).str.strip()
-    for col in ['Inicio', 'Fin']:
-        try:
-            df[col] = pd.to_datetime(df[col], format='%d/%m/%Y', errors='coerce')
-        except:
+# --- Función para cargar datos ---
+def cargar_datos():
+    sheet_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6s9qMzmA_sJRko5EDggumO4sybGVq3n-uOmZOMj8CJDnHo9AWZeZOXZGz7cTg4XoqeiPDIgQP3QER/pub?output=csv"
+    
+    try:
+        response = requests.get(sheet_url, timeout=15)
+        response.raise_for_status()
+        df = pd.read_csv(sheet_url, encoding='utf-8')
+        df.columns = df.columns.str.strip()
+        df['RN'] = df['RN'].astype(str).str.strip()
+        for col in ['Inicio', 'Fin']:
             try:
-                df[col] = pd.to_datetime(df[col], format='%d-%m-%Y', errors='coerce')
+                df[col] = pd.to_datetime(df[col], format='%d/%m/%Y', errors='coerce')
             except:
                 try:
-                    df[col] = pd.to_datetime(df[col], dayfirst=True, errors='coerce')
-                except Exception:
-                    pass
-    df = df.dropna(subset=['Inicio', 'Fin'])
-    df['Inicio_str'] = df['Inicio'].dt.strftime('%d-%m-%Y')
-    df['Fin_str'] = df['Fin'].dt.strftime('%d-%m-%Y')
-    df['Duracion'] = (df['Fin'] - df['Inicio']).dt.days
-    df['Mes'] = df['Fin'].dt.to_period('M').astype(str)
-    df['RN_trunc'] = df['RN'].str.lower().apply(lambda x: x if len(x) <= 30 else x[:27] + '...')
-except Exception:
-    sample_dates = pd.date_range(start='2023-01-01', periods=3)
-    df = pd.DataFrame({
-        'RN': ['Error - Sin datos', 'Ejemplo 2', 'Ejemplo 3'],
-        'Estado': ['Error', 'Error', 'Error'],
-        'Inicio': sample_dates,
-        'Fin': sample_dates + pd.Timedelta(days=30),
-    })
-    df['Inicio_str'] = df['Inicio'].dt.strftime('%d-%m-%Y')
-    df['Fin_str'] = df['Fin'].dt.strftime('%d-%m-%Y')
-    df['Duracion'] = 30
-    df['Mes'] = df['Fin'].dt.to_period('M').astype(str)
-    df['RN_trunc'] = df['RN'].str.lower()
+                    df[col] = pd.to_datetime(df[col], format='%d-%m-%Y', errors='coerce')
+                except:
+                    try:
+                        df[col] = pd.to_datetime(df[col], dayfirst=True, errors='coerce')
+                    except Exception:
+                        pass
+        df = df.dropna(subset=['Inicio', 'Fin'])
+        df['Inicio_str'] = df['Inicio'].dt.strftime('%d-%m-%Y')
+        df['Fin_str'] = df['Fin'].dt.strftime('%d-%m-%Y')
+        df['Duracion'] = (df['Fin'] - df['Inicio']).dt.days
+        df['Mes'] = df['Fin'].dt.to_period('M').astype(str)
+        df['RN_trunc'] = df['RN'].str.lower().apply(lambda x: x if len(x) <= 30 else x[:27] + '...')
+        return df, None
+    except Exception as e:
+        sample_dates = pd.date_range(start='2023-01-01', periods=3)
+        df = pd.DataFrame({
+            'RN': ['Error - Sin datos', 'Ejemplo 2', 'Ejemplo 3'],
+            'Estado': ['Error', 'Error', 'Error'],
+            'Inicio': sample_dates,
+            'Fin': sample_dates + pd.Timedelta(days=30),
+        })
+        df['Inicio_str'] = df['Inicio'].dt.strftime('%d-%m-%Y')
+        df['Fin_str'] = df['Fin'].dt.strftime('%d-%m-%Y')
+        df['Duracion'] = 30
+        df['Mes'] = df['Fin'].dt.to_period('M').astype(str)
+        df['RN_trunc'] = df['RN'].str.lower()
+        return df, str(e)
+
+# --- Cargar datos iniciales ---
+df, error_inicial = cargar_datos()
+ultima_actualizacion = datetime.now()
 
 # --- Colores por estado ---
 color_estado = {
@@ -79,7 +87,7 @@ app.layout = html.Div([
                 value='Todos',
                 clearable=False
             )
-        ], style={'width': '48%', 'display': 'inline-block'}),
+        ], style={'width': '30%', 'display': 'inline-block'}),
         html.Div([
             html.Label("Estado:"),
             dcc.Dropdown(
@@ -89,37 +97,107 @@ app.layout = html.Div([
                 value='Todos',
                 clearable=False
             )
-        ], style={'width': '48%', 'display': 'inline-block', 'marginLeft': '10px'}),
+        ], style={'width': '30%', 'display': 'inline-block', 'marginLeft': '10px'}),
+        html.Div([
+            html.Label("Tema:"),
+            dcc.RadioItems(
+                id='theme-switch',
+                options=[
+                    {'label': 'Claro', 'value': 'light'},
+                    {'label': 'Oscuro', 'value': 'dark'}
+                ],
+                value='light',
+                labelStyle={'display': 'inline-block', 'marginRight': '10px'}
+            )
+        ], style={'width': '30%', 'display': 'inline-block', 'marginLeft': '10px'}),
     ], style={'marginBottom': '20px'}),
 
     html.Div([
-        html.Label("Tema:"),
-        dcc.RadioItems(
-            id='theme-switch',
-            options=[
-                {'label': 'Claro', 'value': 'light'},
-                {'label': 'Oscuro', 'value': 'dark'}
-            ],
-            value='light',
-            labelStyle={'display': 'inline-block', 'marginRight': '10px'}
-        )
-    ], style={'marginBottom': '20px'}),
+        html.Button('Actualizar datos', id='refresh-button', 
+                   style={'backgroundColor': '#3498db', 'color': 'white', 
+                          'border': 'none', 'padding': '10px 15px', 
+                          'borderRadius': '4px', 'cursor': 'pointer',
+                          'marginRight': '15px'}),
+        dcc.Interval(
+            id='interval-component',
+            interval=60*1000*5,  # Actualizar cada 5 minutos (en milisegundos)
+            n_intervals=0
+        ),
+        html.Span(id='ultima-actualizacion', 
+                 style={'fontStyle': 'italic', 'fontSize': '0.9em'}),
+        html.Span(id='error-mensaje', 
+                 style={'color': 'red', 'marginLeft': '15px', 'fontWeight': 'bold'})
+    ], style={'marginBottom': '15px'}),
 
     html.Div([
         dcc.Graph(id='gantt-graph', style={'height': '80vh'})
-    ])
+    ]),
+    
+    # Store para almacenar datos
+    dcc.Store(id='store-data'),
+    dcc.Store(id='store-timestamp')
 ])
 
-# --- Callback ---
+# --- Callback para actualizar datos ---
+@app.callback(
+    [Output('store-data', 'data'),
+     Output('store-timestamp', 'data'),
+     Output('ultima-actualizacion', 'children'),
+     Output('error-mensaje', 'children'),
+     Output('mes-dropdown', 'options'),
+     Output('estado-dropdown', 'options')],
+    [Input('refresh-button', 'n_clicks'),
+     Input('interval-component', 'n_intervals')],
+    [State('mes-dropdown', 'value'),
+     State('estado-dropdown', 'value')]
+)
+def actualizar_datos(n_clicks, n_intervals, mes_actual, estado_actual):
+    global df, ultima_actualizacion
+    
+    # Cargar datos frescos
+    df_new, error = cargar_datos()
+    
+    # Actualizar timestamp
+    ultima_actualizacion = datetime.now()
+    timestamp_str = ultima_actualizacion.strftime("%d-%m-%Y %H:%M:%S")
+    
+    # Preparar opciones para los dropdowns
+    mes_options = [{'label': 'Todos', 'value': 'Todos'}] + [
+        {'label': mes, 'value': mes} for mes in sorted(df_new['Mes'].unique())
+    ]
+    
+    estado_options = [{'label': 'Todos', 'value': 'Todos'}] + [
+        {'label': estado, 'value': estado} for estado in sorted(df_new['Estado'].unique())
+    ]
+    
+    # Guardar los datos actualizados
+    df = df_new
+    
+    # Mensaje de última actualización
+    ultima_act_msg = f"Última actualización: {timestamp_str}"
+    
+    # Mensaje de error (si existe)
+    error_msg = f"Error: {error}" if error else ""
+    
+    return df.to_dict('records'), timestamp_str, ultima_act_msg, error_msg, mes_options, estado_options
+
+# --- Callback para actualizar el gráfico ---
 @app.callback(
     Output('gantt-graph', 'figure'),
-    Input('mes-dropdown', 'value'),
-    Input('estado-dropdown', 'value'),
-    Input('theme-switch', 'value')
+    [Input('store-data', 'data'),
+     Input('mes-dropdown', 'value'),
+     Input('estado-dropdown', 'value'),
+     Input('theme-switch', 'value')]
 )
-def actualizar_grafico(mes, estado, theme):
-    df_filtrado = df.copy()
-
+def actualizar_grafico(data, mes, estado, theme):
+    if data:
+        df_filtrado = pd.DataFrame(data)
+        # Convertir columnas de fecha de nuevo a datetime
+        for col in ['Inicio', 'Fin']:
+            df_filtrado[col] = pd.to_datetime(df_filtrado[col])
+    else:
+        df_filtrado = df.copy()
+    
     if mes != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['Mes'] == mes]
     if estado != 'Todos':
@@ -161,7 +239,7 @@ def actualizar_grafico(mes, estado, theme):
         )
 
         fig.update_traces(
-            hovertemplate="<b>%{customdata[0]}</b><br>Inicio: %{customdata[1]}<br>Fin: %{customdata[2]}",
+            hovertemplate="<b>%{customdata[0]}</b><br>Inicio: %{customdata[1]}<br>Fin: %{customdata[2]}<br>Duración: %{customdata[3]} días",
             marker=dict(line=dict(width=0.3, color='DarkSlateGrey'))
         )
 
